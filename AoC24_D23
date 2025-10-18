@@ -1,0 +1,41 @@
+def part1(adj_matrix):
+    n = len(adj_matrix)
+    cycles = set()
+    for u in range(n):
+        for v in range(u + 1, n):
+            if adj_matrix[u][v] == 1:
+                for w in range(v + 1, n):
+                    if adj_matrix[v][w] == 1 and adj_matrix[w][u] == 1:
+                        cycle = (u, v, w)
+                        cycles.add(cycle)
+    return cycles
+
+import networkx as nx
+import numpy as np
+
+file = open('aocinputs.txt', 'r').read().split('\n')
+edges, nodes = file, list(set(i for x in file for i in x.split('-')))
+mapping={}
+for i, node in enumerate(nodes):
+    mapping[node] = i
+n = len(nodes)
+adj_matrix = [[0] * n for _ in range(n)]
+for x in edges:
+    adj_matrix[mapping[x[:2]]][mapping[x[3:5]]] = 1
+    adj_matrix[mapping[x[3:5]]][mapping[x[:2]]] = 1
+keys = list(mapping)
+cycles = part1(adj_matrix)
+
+cycles = [[keys[i] for i in j] for j in cycles]
+valid_cycles = set()
+for ele in cycles:
+    for item in ele:
+        if item.startswith('t'):
+            valid_cycles.add(tuple(ele))
+print(f'Part 1: {len(valid_cycles)}')
+G = nx.from_numpy_array(np.array(adj_matrix))
+max_complete_sub = []
+for clique in nx.find_cliques(G):
+    if len(clique) > len(max_complete_sub):
+        max_complete_sub = clique
+print(f'Part 2: {','.join(sorted([keys[ind] for ind in max_complete_sub]))}')
