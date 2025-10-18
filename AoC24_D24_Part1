@@ -1,0 +1,28 @@
+import re
+
+def part1(puzzle_input):
+    initial_values, gates = puzzle_input.split('\n\n')
+    values = {}
+    for wire, value in re.findall(r'(\w+): (0|1)', initial_values):
+        values[wire] = int(value)
+    wire_map = {}
+    for in1, op, in2, out in re.findall(r'(\w+) (AND|XOR|OR) (\w+) -> (\w+)', gates):
+        wire_map[out] = (op, in1, in2)
+    def get_bit(wire):
+        if wire in values:
+            return values[wire]
+        op, *inputs = wire_map[wire]
+        in1, in2 = map(get_bit, inputs)
+        if op == 'XOR':
+            res = in1 ^ in2
+        elif op == 'OR':
+            res = in1 | in2
+        else:
+            res = in1 & in2
+        return res
+    print(wire_map)
+    max_bit = max(int(wire[1:]) for wire in wire_map if wire.startswith('z'))
+    z_bits = [str(get_bit(f'z{i:02}')) for i in range(max_bit + 1)]
+    return int(''.join(reversed(z_bits)), 2)
+
+print(part1(open('aocinputs.txt').read()))
