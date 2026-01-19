@@ -1,0 +1,176 @@
+from scipy.integrate import odeint
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
+from matplotlib.colors import Normalize
+from tqdm import tqdm
+from lyapynov import ContinuousDS, mLCE
+
+#globals
+dt = 0.01
+T_span = (0, 50 + dt)
+t = np.linspace(*T_span, round(T_span[1]/dt))
+phimax = np.pi #initial angle
+phidotmax = 5 #initial angular velocity
+zeta = 0.1 #set ratio of pivot oscillation amplitude to pendulum length
+
+def dydx(vec, t, omega0, zeta):
+    phi, phidot = vec
+    return [phidot, -np.sin(phi) + zeta * (omega0 ** 2) * np.cos(omega0 * t) * np.cos(phi)]
+
+
+def graph(sols):
+    i=0
+    for omega0, omegsol in sols.items():
+
+        for phi0, phisol in omegsol.items():
+            plt.plot(t, phisol, label=rf'$\phi_0 = {phi0}$')
+        plt.xlim(0, max(t))
+        plt.title(rf'$\omega = {omega0}$')
+        plt.legend(loc='lower right')
+        plt.savefig(f'omega={omega0}.png')
+        i += 1
+
+        plt.show()
+
+
+def animate(omega, phisol, phiorig):
+    # Sort keys for consistent ordering
+    phi0_labels, phi_solutions = zip(*sorted(phisol.items()))
+
+    fig, ax = plt.subplots(figsize=(7,7))
+    ax.set_aspect('equal', 'box')
+    ax.set_xlim(-1.3 - zeta, 1.3 + zeta)
+    ax.set_ylim(-1.3, 1.3)
+    ax.set_title("Driven Pendula")
+
+    # Pivot (driver) motion
+    x_p = zeta * np.cos(omega * t)
+    y_p = np.zeros_like(t)
+
+    # Precompute pendulum trajectories
+    x_orig_all = []
+    y_orig_all = []
+    x_b_all    = []
+    y_b_all    = []
+
+    for key, phi in zip(phi0_labels, phi_solutions):
+        x_orig_all.append(np.sin(phiorig[key]))
+        y_orig_all.append(-np.cos(phiorig[key]))
+
+        x_b_all.append(x_p + np.sin(phi))
+        y_b_all.append(-np.cos(phi))
+
+    # Artists
+    orig_lines = []
+    driven_lines = []
+
+    for _ in phi0_labels:
+        o, = ax.plot([], [], 'o-', lw=1.5)   # original undriven
+        d, = ax.plot([], [], 'o-', lw=3)     # driven pendulum
+        orig_lines.append(o)
+        driven_lines.append(d)
+
+    pivot, = ax.plot([], [], 'ko', markersize=6)
+    time_text = ax.text(0.02, 0.95, "", transform=ax.transAxes)
+
+    # Update function
+    def update(frame):
+        pivot.set_data([x_p[frame]], [y_p[frame]])
+        time_text.set_text(f"t = {t[frame]:.2f}")
+
+        for i in range(len(phi0_labels)):
+            # original (fixed pivot at origin)
+            #orig_lines[i].set_data(
+                #[0, x_orig_all[i][frame]],
+                #[0, y_orig_all[i][frame]]
+            #)
+            # driven pendulum
+            driven_lines[i].set_data(
+                [x_p[frame], x_b_all[i][frame]],
+                [y_p[frame], y_b_all[i][frame]]
+            )
+
+        return [pivot, time_text] + orig_lines + driven_lines
+
+    ani = FuncAnimation(
+        fig, update, frames=len(t),
+        interval=1000*(t[1]-t[0]), blit=True
+    )
+    plt.show()
+
+I = input('1) Graph \n2) Animate\n3) Heatmap\n')
+
+def heatmap(omeg):
+    def jac(v, t, zeta=0.1):
+        phi, phidot = v
+        return np.array([[0, 1], [- zeta * omeg ** 2 * np.cos(omeg * t) * np.sin(phi) - np.cos(phi), 0]])
+
+    def f(v, t, zeta=0.1):
+        phi, phidot = v
+        return np.array([phidot, zeta * omeg ** 2 * np.cos(omeg * t) * np.cos(phi) - np.sin(phi)])
+
+    n = 200  # axis is nxn pixels
+    q, p = np.meshgrid(np.linspace(-phimax, phimax, n), np.linspace(-phidotmax, phidotmax, n))
+    def get_exp(phi, phidot):
+        accuracy = 1
+        continuous_system = ContinuousDS(np.array([phi,phidot]), 0, f, jac, dt)
+        lya_max = 0
+        for _ in range(accuracy):
+            lya_temp = mLCE(continuous_system, n_forward = 500, n_compute = 2000, keep = False)
+            if lya_temp > lya_max:
+                lya_max = lya_temp
+        return lya_max
+
+    res = np.zeros(p.shape)
+    for i in tqdm(range(n)):
+        res[i] = [get_exp(q[i, j], p[i, j]) for j in range(n)]
+    # making it pretty
+
+    np.savetxt(f"zeta=0.1, omega={omeg}, correct.csv", res, delimiter="," )
+    cmap = plt.get_cmap("inferno")
+    norm = Normalize(np.min(res), np.max(res), clip=True)
+    fig, ax = plt.subplots()
+    fig.colorbar(ax.pcolormesh(q, p, res, cmap=cmap, norm=norm, shading="auto"), ax=ax)
+    ax.spines[['left', 'bottom']].set_position('zero')
+    ax.spines[['top', 'right']].set_visible(False)
+    ax.spines[['left', 'bottom']].set_color('white')
+    ax.tick_params(axis='y', colors='white')
+    ax.set_ylabel(r"$\dot\phi_0$")
+    ax.set_xlabel(r"$\phi_0$")
+    ax.tick_params(axis='x', colors='white')
+    ax.yaxis.label.set_color('white')
+    ax.xaxis.label.set_color('white')
+    ax.set_title(
+        rf"Map of Lyapunov Exponent for $\zeta$ = {zeta}, $\omega$ = {omeg} with initial conditions $\phi_0, \dot\phi_0$")
+    fig.tight_layout()
+    plt.show()
+
+omega0s = np.arange(5, 31, 5)
+if I == '3':
+    for x in omega0s:
+        heatmap(x)# set value of omega for phase space
+
+else:
+    phi0s = np.linspace(1, 2, 6)
+    sols = {}
+    solsorig = {}
+    for omega0 in omega0s:
+        omegsol = {}
+        omegorig = {}
+        for phi0 in phi0s:
+            phi = odeint(dydx, [phi0, 0], t, args=(omega0, zeta))[:, 0]
+            phiorig = odeint(dydx, [phi0, 0], t, args=(omega0, 0))[:, 0]
+            omegsol.update({phi0: phi})
+            omegorig.update({phi0: phiorig})
+
+        sols.update({omega0: omegsol})
+        solsorig.update({omega0: omegorig})
+    if I == '2':
+        value = int(input('What value of omega would you like to see?'))
+        try:
+            animate(value, sols[value], solsorig[value])
+        except:
+            print('Oops! not a small multiple of 5.')
+    if I == '1':
+        graph(sols)
